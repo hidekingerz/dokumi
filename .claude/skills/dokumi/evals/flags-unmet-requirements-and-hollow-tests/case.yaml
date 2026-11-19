@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: flags-unmet-requirements-and-hollow-tests
+expected_outcome: |
+  判定は FIX（PR 不可）。空白のみの入力で検索ボタンが押せること（要件 1 未達）と、取得失敗時にエラーが表示されないこと（要件 4 未実装、例外の握りつぶし）を、実行結果つきで指摘する。要件 4 のテストが skip されていて完了報告と食い違うこと、追加されたテストのアサーションが緩いことも指摘する。検証対象のコードは書き換えない。
+context:
+  scaffold_script: place-files.sh

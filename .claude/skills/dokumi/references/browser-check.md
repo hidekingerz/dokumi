@@ -29,8 +29,11 @@
 Playwright のスクリプトを `.dokumi/browser-check.mjs` に書いて実行する。手作業の確認ではなくスクリプトにするのは、修正後に同じ確認を再実行できるようにするため。
 
 ```js
-import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+// require 経由で読む。プロジェクトに Playwright がなく、環境に入っているもの（NODE_PATH）を使う場合、
+// ESM の import では見つからないため。
+const { chromium } = createRequire(import.meta.url)('playwright');
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:5173';
 mkdirSync('.dokumi/shots', { recursive: true });
@@ -62,7 +65,7 @@ writeFileSync('.dokumi/browser-check.json', JSON.stringify({ results, problems }
 console.log(JSON.stringify({ results, problems }, null, 2));
 ```
 
-プロジェクトに Playwright がなければ、環境に入っているものを使う。どちらにもなければ、プロジェクトに依存を追加せず、段階を「Playwright なしのため未実施」として終える。
+プロジェクトに Playwright がなければ、環境に入っているものを使う（`node -e "require('playwright')"` が通るかで確かめる）。どちらにもなければ、プロジェクトに依存を追加せず、段階を「Playwright なしのため未実施」として終える。
 
 要素は、ユーザーが認識する手がかり（ロール、ラベル、表示テキスト）で指定する。クラス名や DOM の構造で指定すると、見つかっても「ユーザーに見えている」ことの確認にならない。
 

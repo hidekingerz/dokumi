@@ -75,14 +75,26 @@ const framework =
     (name) => deps[name],
   ) ?? null;
 
-const nodeMajor = Number(process.versions.node.split('.')[0]);
+// プロジェクトが node_modules/.bin に Node.js を持っていれば、npm scripts と npx はそちらを使う。
+function projectNodeVersion() {
+  const local = join(root, 'node_modules', '.bin', 'node');
+  if (!existsSync(local)) return null;
+  try {
+    return execFileSync(local, ['-p', 'process.versions.node'], { encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
+}
+const localNode = projectNodeVersion();
+const nodeVersion = localNode ?? process.versions.node;
+const nodeMajor = Number(nodeVersion.split('.')[0]);
 const vitestMajor = major(deps.vitest);
 const jestMajor = major(deps.jest);
 const usesVitePlus = Boolean(deps['vite-plus']);
 const runner = vitestMajor || usesVitePlus ? 'vitest' : jestMajor ? 'jest' : null;
 
 const blockers = [];
-if (nodeMajor < 24) blockers.push(`Node.js ${process.versions.node} で実行中（mutator は 24 以上が必要）`);
+if (nodeMajor < 24) blockers.push(`Node.js ${nodeVersion} で実行中（mutator は 24 以上が必要）`);
 if (runner === 'vitest' && !usesVitePlus && vitestMajor < 5) blockers.push(`Vitest ${vitestMajor}（mutator は 5 が必要）`);
 if (runner === 'jest') blockers.push('Jest は ESM モードのみの実験的対応のため既定では使わない');
 if (!runner) blockers.push('Vitest も Jest も見つからない');
@@ -105,7 +117,8 @@ console.log(
       framework,
       commands,
       base,
-      node: process.versions.node,
+      node: nodeVersion,
+      nodeSource: localNode ? 'node_modules/.bin/node（npm scripts と npx が使う）' : 'PATH',
       testRunner: runner,
       mutator: {
         eligible: blockers.length === 0,
