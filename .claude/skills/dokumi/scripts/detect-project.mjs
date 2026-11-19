@@ -3,6 +3,7 @@
 // 使い方: node detect-project.mjs [--base <ref>] [--root <dir>]
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -134,6 +135,33 @@ if (runner === 'vitest' && !usesVitePlus && vitestMajor < 5) blockers.push(`Vite
 if (runner === 'jest') blockers.push('Jest は ESM モードのみの実験的対応のため既定では使わない');
 if (!runner) blockers.push('Vitest も Jest も見つからない');
 
+// Playwright はプロジェクトの依存になくても、環境に入っていれば段階 6 に使える。
+function locatePlaywright() {
+  if (deps['@playwright/test'] || deps.playwright || has('node_modules/playwright')) return 'project';
+  try {
+    // NODE_PATH やグローバルに入っているもの
+    createRequire(import.meta.url).resolve('playwright');
+    return 'environment';
+  } catch {
+    return null;
+  }
+}
+
+// package.json の engines.node と、実行中の Node の食い違い。単純な範囲（26.x、^26、>=24）だけ判定する。
+function checkEngines() {
+  const range = pkg.engines?.node;
+  if (!range) return null;
+  const m = /^\s*(>=|\^|~)?\s*v?(\d+)(?:\.[\dx*]+)*\s*$/.exec(range);
+  if (!m) return { node: range, satisfied: null, note: '範囲を判定できない。実行中の Node が合っているか確かめる。' };
+  const want = Number(m[2]);
+  const satisfied = m[1] === '>=' ? nodeMajor >= want : nodeMajor === want;
+  return {
+    node: range,
+    satisfied,
+    note: satisfied ? null : `プロジェクトの指定は Node ${range}、実行中は ${nodeVersion}。合わせられなければレポートに書く。`,
+  };
+}
+
 const base = resolveBase();
 // 検証自身の作業ファイルは変更に数えない。
 const ownFiles = /^(\.dokumi|\.mutator)\//;
@@ -156,6 +184,7 @@ console.log(
       base,
       node: nodeVersion,
       nodeSource: localNode ? 'node_modules/.bin/node（npm scripts と npx が使う）' : 'PATH',
+      engines: checkEngines(),
       testRunner: runner,
       coverage,
       mutator: {
@@ -165,6 +194,8 @@ console.log(
         reasons: blockers,
       },
       playwrightInstalled: Boolean(deps['@playwright/test'] || deps.playwright),
+      // project: プロジェクトの依存から読める / environment: 環境に入っているものを使える / null: どちらにもない
+      playwrightAvailable: locatePlaywright(),
       diff: {
         files: changed.length,
         all: changed,

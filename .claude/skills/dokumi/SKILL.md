@@ -112,7 +112,11 @@ node $SKILL/scripts/detect-project.mjs > .dokumi/project.json
 git diff <mergeBase> -- . ':!.dokumi' > .dokumi/before.patch   # 最後に、検証対象を変えていないことの確認に使う
 ```
 
-出力から、使うコマンド（`commands`）、ベース（`base.mergeBase`）、mutator が使えるか（`mutator.eligible`）、UI に触る diff か（`diff.touchesUi`）を読む。モノレポなら `--root` で対象パッケージを指定する。ベースが特定できなければ `--base <ref>` を渡す。
+依存が入っていなければ（`node_modules` がない）、先にプロジェクトのロックファイルどおりに入れる（`npm ci` など）。`package.json` やロックファイルが変わる入れ方はしない。
+
+`git rev-parse --git-path info/exclude` は、git worktree の中では本体リポジトリの `.git/info/exclude` を指す（除外設定は worktree 間で共有される）。書き込むのは作業ディレクトリの 2 行だけで、コミットにも他の worktree の差分にも影響しないので、そのまま実行してよい。
+
+出力から、使うコマンド（`commands`）、ベース（`base.mergeBase`）、mutator が使えるか（`mutator.eligible`）、UI に触る diff か（`diff.touchesUi`）を読む。`engines.satisfied` が false なら、実行中の Node がプロジェクトの指定と違う。合わせられるなら合わせ、合わせられなければレポートの「検証の副作用」に書く。モノレポなら `--root` で対象パッケージを指定する。ベースが特定できなければ `--base <ref>` を渡す。
 
 `commands` が `null` の項目は、その検査がプロジェクトに存在しないということ。勝手に検査を追加せず、レポートに「未設定のため未実施」と書く。
 
@@ -154,6 +158,17 @@ node $SKILL/scripts/scan-diff.mjs --base <mergeBase> > .dokumi/scan.json
 
 返ってきた指摘は鵜呑みにしない。各指摘のコマンドを自分で再実行し、出力が失敗を示していて、かつ要件に反するものだけを残す。再現しない指摘は捨て、捨てた件数と理由をレポートに書く。
 
+残った指摘の重大度は次のとおり。
+
+| 指摘 | 重大度 |
+|---|---|
+| 要件が明示している振る舞いや数値に反し、再現できた | blocker。今のデータで起きているかどうかは重大度を変えず、レポートの「実害」の行で区別する（`references/report-format.md`） |
+| 要件の文言が複数の解釈を許し、実装はその一方に従っている | warning（判断が要る）。どちらの解釈かで実装が変わるなら、判定は ESCALATE（段階 8） |
+| 要件にない変更で、害は確認されていない | warning（判断が要る） |
+| 再現していない懸念 | warning |
+
+要件に「実データで確かめる」「N 件以上入れ替わる」のような条件があり、測る条件（日付、入力、設定の組み合わせ）が書かれていないときは、その機能の結果を左右する軸を 2〜3 本選び、それぞれ複数の値で測る。1 つの条件だけで「満たす」と書かない。選んだ条件はレポートに書く（読み手が別の条件で測り直せるように）。
+
 ### 4. テストの質
 
 **`mutator.eligible` が true の場合**、`references/mutation.md` に従って mutator を実行し、結果を振り分ける。
@@ -162,17 +177,17 @@ node $SKILL/scripts/scan-diff.mjs --base <mergeBase> > .dokumi/scan.json
 # 1 回目：変更行だけを測る。判定の土台はこの結果
 npx mutator --since <mergeBase> --time-budget 300 --reporter agent \
   > .dokumi/mutants.json 2> .dokumi/mutants.log
-node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json --base <mergeBase> > .dokumi/mutants-triage.json
+node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json --base <mergeBase> --mode <mode> > .dokumi/mutants-triage.json
 
 # 2 回目：範囲を広げる。1 回目に Pending が残らなかったときだけ
 npx mutator --since <mergeBase> --include-test-changes --kill-matrix --time-budget 300 --reporter agent \
   > .dokumi/mutants-wide.json 2> .dokumi/mutants-wide.log
-node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants-wide.json --base <mergeBase> > .dokumi/mutants-wide-triage.json
+node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants-wide.json --base <mergeBase> --mode <mode> > .dokumi/mutants-wide-triage.json
 ```
 
 2 回に分けるのは、広げた範囲が時間枠に収まらないことがあるため。変更したテストが画面全体を描画していると、対象は既存コードのほぼ全部に広がる（実例：変更行 48 件に対して 1386 件。5 分で 8 割が未実行のまま打ち切られ、変更行の一部も測られなかった）。先に変更行を測っておけば、2 回目が打ち切られても判定の土台は残る。2 回目からは、1 回目では出ない種類の指摘（何も検出しない新規テスト、既存の検出力の低下、今回書き換えていない行の穴）だけを足す。2 回目に `Pending` が残ったら、それらは「未判定」としてレポートに書き、時間枠を延ばして粘らない（`references/mutation.md` の「実行」）。
 
-`--mode <mode>` も渡す。振り分けの線引きはスクリプトに固定してある（何も検出しない新規テスト、重要領域の未検出、skip されたテスト、既存の検出力の低下が blocker。それ以外の未検出は warning。今回書き換えていない行の穴は 1 段階下げるか note）。
+`mutator.installed` が false なら、先に `references/mutation.md` の「導入」に従って入れる（npm のプロジェクトなら `--no-save` で入り、`package.json` は変わらない）。`--mode` は振り分けスクリプトへの引数で、mutator 本体には渡さない。振り分けの線引きはスクリプトに固定してある（何も検出しない新規テスト、重要領域の未検出、skip されたテスト、既存の検出力の低下が blocker。それ以外の未検出は warning。今回書き換えていない行の穴は 1 段階下げるか note）。
 
 どのテストも実行していない変更コードは、`strict` なら blocker。`standard` なら `needsEvidence: true` の warning で出てくるので、段階 6 まで終えてから 1 件ずつ決める。
 
@@ -185,7 +200,7 @@ node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants-wide.json --base <mergeBa
 
 どちらの場合も、mutator では測れないもう半分を別エージェントに判定させる（`references/reviewer-briefs.md` の「テストの質」）。振る舞いを保ったまま内部だけ変えたときに落ちるテスト、つまり実装に張り付いたテストの検出。サブエージェントを起動できない環境では、段階 3 と同じく自分で行い（コピーの上で振る舞いを保つ書き換えを 1 つ入れてテストを走らせる）、「独立レビューなし」と書く。
 
-mutator の数字を「変更は実測済み」の意味で読まない。型検査を通らないミュータント（`compileErrors`）は実行されないので、変更の中心が型で縛られた値（文字列リテラル型の既定値など）だと、そこは測られていない。その場合は段階 5 で直接確かめる。
+mutator の数字を「変更は実測済み」の意味で読まない。型検査を通らないミュータント（`mutants.json` の `counts.CompileError`、振り分け結果の `compileErrors`）は実行されないので、変更の中心が型で縛られた値（文字列リテラル型の既定値など）だと、そこは測られていない。その場合は段階 5 で直接確かめる。
 
 ### 5. 影響範囲
 
@@ -215,11 +230,13 @@ diff の外で壊れるものを探す。呼び出し元の列挙は目的では
 
 ### 6. 実ブラウザ検証
 
-`diff.touchesUi` が true のときだけ実行する。false なら「UI への変更なし」として飛ばす。
+`diff.touchesUi` が true のときだけ実行する。false なら「UI への変更なし」として飛ばす。Playwright が使えるかは `playwrightAvailable` で見る（`project` か `environment` なら使える。`playwrightInstalled` はプロジェクトの依存にあるかどうかだけを示す）。
 
 `references/browser-check.md` に従い、開発サーバーを起動して、変更した画面を Playwright で実際に操作する。要件の各項目を画面上で確かめ、コンソールエラー、失敗したリクエスト、モバイル幅とデスクトップ幅のスクリーンショットを証拠として `.dokumi/shots/` に残す。
 
 既存の E2E テストが通ることは、この段階の代わりにならない。今回の変更で増えた振る舞いを、自分で操作して確かめる。
+
+位置、高さ、折り返しのように配置を測る確認は、1 つの条件で済ませない。表示される文字列の長さや要素の数が変わる条件を複数試す（`references/browser-check.md` の「配置を測るとき」）。1 条件で「崩れない」と確かめても、別の条件では崩れることがある。
 
 開発サーバーを起動できない、または画面に到達できない（認証や外部 API が必要など）場合は、できた範囲と止まった理由を書き、判定を ESCALATE 寄りにする。確かめていないものを確かめたと書かない。
 
@@ -238,6 +255,14 @@ diff の外で壊れるものを探す。呼び出し元の列挙は目的では
 | **PASS** | blocker が 0 件（`onWarning: ask` のときは、判断が要る warning も 0 件） | PR を作ってよい。`report.md` の PR 用の節を PR 本文に入れる。warning と未証明の項目は隠さず載せる。 |
 | **FIX** | blocker が 1 件以上あり、修正方法が明確 | 生成エージェント（自分なら自分）が `report.json` の指摘を修正し、再検証する。 |
 | **ESCALATE** | 2 回修正しても blocker が残る／要件の解釈が割れている／修正に仕様判断が要る／検証そのものを完遂できなかった／`onWarning: ask` で判断が要る warning がある | PR を作らず、人に判断を求める。何を決めてほしいかを 1 つずつ書く。 |
+
+条件が重なったときは **ESCALATE を優先する**。直し方が明確な blocker があっても、次のどれかに当たれば FIX ではなく ESCALATE にする。
+
+- 要件の解釈が割れていて、どちらを採るかで実装が変わる箇所が 1 件でもある
+- blocker のうち 1 件でも、直し方が仕様の判断に依存する
+- 要件の中心にかかわる項目を確かめられなかった
+
+人の判断を待たずに一部だけ直すと、判断の結果で直した箇所をもう一度変えることになる。ESCALATE のレポートには、判断を待たずに直せる blocker とその直し方も載せ、「決めてほしいこと」と分けて書く。解釈が割れていても、どちらを採っても実装が変わらない箇所は、判定に影響させず warning に載せる。
 
 **修正と再検証は最大 2 回。** 再検証では段階 1 と、blocker が出た段階をやり直す（mutator は `--only <key>` で該当ミュータントだけを数秒で再確認できる）。修正が別の箇所を壊していないか、段階 2 も毎回回す。
 

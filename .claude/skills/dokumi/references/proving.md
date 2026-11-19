@@ -30,6 +30,10 @@ npx vitest run --config .dokumi/review/vitest.config.ts <ファイル名の一�
 
 再現テストが増えると設定の `include` が全部拾うので、ファイル名で絞って実行する。値を見比べたいときは、`console.log` ではなくアサーションに入れるかファイルに書き出す（通過したテストの出力はログに出ないことがある）。
 
+`defineConfig` の型によっては `base.test` が型エラーになる。そのときは `(base as { test?: object }).test` のように読む（テスト用の設定なので、型を緩めてよい）。
+
+重いテスト（実データで全組み合わせを計算する、多数の条件を回す）は、既定の 5 秒で打ち切られる。そのテストだけ `it('...', () => { ... }, 120_000)` のように時間を延ばす。打ち切られても途中までの出力がファイルに残ることがあり、完了したように見えるので、ログの `Tests` の行で通過を確かめる。
+
 プロジェクトの設定が関数形式だったり `vitest.config.*` が別にあるときは、それに合わせて読み込み元を変える。Jest なら `--rootDir . --testMatch '<rootDir>/.dokumi/review/*.test.*'`。
 
 テストは、ユーザーに見える振る舞いで書く（「クリアを押しても送信されない」）。期待値は要件や変更前の挙動から決める。
@@ -42,6 +46,8 @@ npx vitest run --config .dokumi/review/vitest.config.ts <ファイル名の一�
 git worktree add --detach .dokumi/base <mergeBase>
 ln -s "$PWD/node_modules" .dokumi/base/node_modules   # 依存が変わっていない場合。変わっていれば base 側で install する
 ```
+
+`git worktree add` は、本体リポジトリの `.git/worktrees/` に管理情報を書く（対象のリポジトリ自体が worktree のときも、書き込み先は本体）。作業ツリーやコミットには影響しないが、片付けを忘れると残るので、最後に `git worktree list` で消えたことを確かめる。
 
 同じテストを 2 つのツリーに当てるには、テスト対象の読み込み元を切り替えられるようにしておく。
 
