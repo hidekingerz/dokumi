@@ -197,7 +197,11 @@ console.log(
       pending: report.counts?.Pending ?? 0,
       comparison: report.comparison ?? null,
       locationKnown: Boolean(changed),
+      // summary はミュータント単位の件数。レポートの指摘の件数には groupSummary（根本原因ごと）を使う。
       summary: { blocker: count('blocker'), warning: count('warning'), note: count('note') },
+      groupSummary: Object.fromEntries(
+        ['blocker', 'warning', 'note'].map((s) => [s, groups.filter((g) => g.severity === s).length + findings.filter((f) => !f.key && f.severity === s).length]),
+      ),
       byFile,
       groups,
       simplifyCandidates: findings.filter((f) => f.simplify).map((f) => ({ key: f.key, file: f.file, line: f.line, kind: f.simplify })),

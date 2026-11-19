@@ -25,8 +25,10 @@ export default defineConfig({
 ```
 
 ```sh
-npx vitest run --config .dokumi/review/vitest.config.ts 2>&1 | tee .dokumi/review/<名前>.log
+npx vitest run --config .dokumi/review/vitest.config.ts <ファイル名の一部> 2>&1 | tee .dokumi/review/<名前>.log
 ```
+
+再現テストが増えると設定の `include` が全部拾うので、ファイル名で絞って実行する。値を見比べたいときは、`console.log` ではなくアサーションに入れるかファイルに書き出す（通過したテストの出力はログに出ないことがある）。
 
 プロジェクトの設定が関数形式だったり `vitest.config.*` が別にあるときは、それに合わせて読み込み元を変える。Jest なら `--rootDir . --testMatch '<rootDir>/.dokumi/review/*.test.*'`。
 
@@ -58,6 +60,8 @@ SRC=../base/src npx vitest run --config .dokumi/review/vitest.config.ts         
 
 作業ツリーで失敗し、ベースで通れば、今回の変更が原因だと示せる。両方で失敗するなら既存の問題（note）。
 
+この切り替えが使えるのは、ベースにも存在するモジュールを読むテストだけ。今回新しく追加されたファイルを import するテストは、ベースでは読み込みに失敗する。既存の画面への影響を比べるテストは、新規ファイルを読むテストと別のファイルに分ける。
+
 画面で比べるときは、ベースの worktree でも開発サーバーを別のポートで起動し、同じ `browser-check.mjs` を両方に当てる（`references/browser-check.md`）。2 つ起動するとポートを取り合うので、ログから読んだポートがどちらのツリーのものか、変更したファイルを取得して確かめる（例：`curl -s <url>/src/components/Button.tsx | grep submit`）。
 
 終わったら片付ける。
@@ -80,9 +84,18 @@ SRC=./variant-a/src npx vitest run --config .dokumi/review/vitest.config.ts
 既存のテスト一式をコピーに当てたいときは、ツリーごと複製する。
 
 ```sh
-git worktree add --detach .dokumi/variant HEAD && (cd .dokumi/variant && git apply ../../.dokumi/working.patch)
-# working.patch は `git diff <mergeBase> > .dokumi/working.patch`（未追跡ファイルは別途コピー）
+git worktree add --detach .dokumi/variant <mergeBase>
+git diff <mergeBase> -- . ':!.dokumi' | (cd .dokumi/variant && git apply)        # 追跡済みファイルの変更
+git ls-files --others --exclude-standard | grep -v '^\.dokumi/' | while read -r f; do   # 未追跡の新規ファイル
+  mkdir -p ".dokumi/variant/$(dirname "$f")" && cp "$f" ".dokumi/variant/$f"
+done
+ln -s "$PWD/node_modules" .dokumi/variant/node_modules
+# .dokumi/variant の中を編集し、その中で npm test や npx mutator を実行する
 ```
+
+変更の中心が未追跡の新規ファイルにあることは多い。パッチだけでは再現されないので、未追跡ファイルのコピーを忘れない。
+
+`node_modules` をリンクで共有した複数のツリーで開発サーバーを同時に起動すると、依存の事前バンドルのキャッシュを取り合うことがある。挙動がおかしければ 1 つずつ起動する。
 
 修正案を試すのは、「直し方が明確か」を判定するためと、`fix` に書く内容を確かなものにするため。確かめた修正を作業ツリーに適用するのは、判定を出した後の、生成エージェントの仕事。
 
@@ -102,6 +115,13 @@ git worktree add --detach .dokumi/variant HEAD && (cd .dokumi/variant && git app
 git diff <mergeBase> -- . ':!.dokumi' > .dokumi/before.patch     # 最初
 git diff <mergeBase> -- . ':!.dokumi' | diff - .dokumi/before.patch && echo unchanged   # 最後
 git status --short                                               # 未追跡ファイルが増えていないか
+```
+
+`git diff` は未追跡ファイルの中身を見ない。未追跡の新規ファイルが変更に含まれるときは、そのハッシュも最初に取って最後に比べる。
+
+```sh
+git ls-files --others --exclude-standard | grep -v '^\.dokumi/' | xargs sha1sum > .dokumi/before.untracked   # 最初
+git ls-files --others --exclude-standard | grep -v '^\.dokumi/' | xargs sha1sum | diff - .dokumi/before.untracked && echo unchanged   # 最後
 ```
 
 別エージェントに依頼した後にも行う（相手が既存ファイルを変えていないかの確認）。

@@ -13,7 +13,9 @@
 
 冒頭の「blocker / warning / note」は指摘の件数。実施できなかった検査（lint が未設定、axe がない、など）は指摘ではないので数えず、「段階ごとの結果」の補足と「未証明・未確認」に書く。
 
-同じ根本原因の指摘は 1 件にまとめる。mutator の未検出は `mutants-triage.json` の `groups` の 1 行を 1 件とする（9 個のミュータントが 1 つのテスト不足から来ているなら、指摘は 1 件）。
+完了報告との食い違い、検証の副作用、PR に混ぜないよう知らせる入力ファイルは、それぞれの節に書き、件数には入れない。
+
+同じ根本原因の指摘は 1 件にまとめる。`mutants-triage.json` の `summary` はミュータント単位の件数なので転記しない（指摘の件数は `groupSummary`）。mutator の未検出は `mutants-triage.json` の `groups` の 1 行を 1 件とする（9 個のミュータントが 1 つのテスト不足から来ているなら、指摘は 1 件）。
 
 ## 重大度
 
@@ -176,6 +178,8 @@
         "artifacts": [".dokumi/shots/search-mobile.png"]
       },
       "fix": "disabled の条件で空文字と空白のみも無効にする。",
+      "fixTried": true,
+      "fixTrialResult": "コピー上で適用し、再現テストと既存テスト 9 件が通過",
       "recheck": "node .dokumi/browser-check.mjs"
     },
     {
@@ -217,6 +221,7 @@
 - `stages[].status`：`pass` / `fail` / `skipped`。`skipped` には `detail` に理由を書く。
 - `findings[]`：`blocker` を先に。すべての `blocker` に `evidence.command` と `evidence.output` が必要（なければ `warning` に下げる）。
 - `findings[].fix`：何をどう直すかを具体的に。「テストを改善する」のような指示は不可。
+- `findings[].fixTried`：その直し方をコピーの上で試したか。試したなら `fixTrialResult` に結果を書く。試していない直し方は `false` にして、推測であることが分かるようにする。
 - `findings[].recheck`：その指摘が直ったことを確かめるコマンド。再検証で使う。
 - `claimMismatches[]`：完了報告の主張のうち、実際と食い違うもの。対応する指摘の `id` を `finding` に入れる。なければ空配列。
 - `decisionsNeeded[]`：`ESCALATE` のとき、人に決めてほしいこと。`{ "question", "options": [{ "choice", "consequence" }] }`。

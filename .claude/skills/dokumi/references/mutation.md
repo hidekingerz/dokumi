@@ -151,7 +151,9 @@ node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json --base <mergeBase> >
 npx mutator --only <key> --only <key> --reporter agent > .dokumi/mutants-recheck.json
 ```
 
-`gaps` から消えて `counts.Killed` に入っていれば解消。まだ残るなら、同じ種類のテストを足すのではなく、入力かアサーションを見直す。warning の未検出は 1 回だけ修正を試み、残ったものは PR 本文に載せる。
+`gaps` から消えていれば解消。多くは `counts.Killed` に入るが、到達していなかったミュータントは、到達させると `CompileError`（型検査を通らないので実行しない）に変わることがある。それも解消として扱う。まだ残るなら、同じ種類のテストを足すのではなく、入力かアサーションを見直す。
+
+テストを足した後は key が変わることがある（`unknownKey` の警告が出る）。そのときは `--only` ではなく `--since` で全体を回し直す。修正案をコピー（worktree）の上で試すときも、その中で同じコマンドがそのまま使える。warning の未検出は 1 回だけ修正を試み、残ったものは PR 本文に載せる。
 
 ## 等価ミュータント
 
