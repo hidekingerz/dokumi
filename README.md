@@ -7,6 +7,14 @@ agent向け検証スキル群
 |---|---|
 | [`dokumi`](.claude/skills/dokumi/SKILL.md) | AI エージェントが生成したフロントエンドのコードを、PR を作る前に検証する。PASS / FIX / ESCALATE の判定と、人向け・エージェント向けのレポートを出す。 |
 
+## ドキュメント
+
+| 文書 | 内容 |
+|---|---|
+| [使い方](docs/usage.md) | 導入、呼び出し方、結果の見方、厳しさの切り替え |
+| [判定基準](docs/criteria.md) | 何を調べ、何を PR の条件にしているか |
+| [作業レポート](docs/work-report-2026-11-19.md) | 初版の作成と試験の記録 |
+
 ## 使い方
 
 `.claude/skills/dokumi/` を、対象リポジトリの `.claude/skills/`（または `~/.claude/skills/`）にコピーする。エージェントに「PR 前に dokumi で検証して」と頼むか、実装完了時に自動で呼ばれる。
