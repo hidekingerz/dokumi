@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: passes-clean-change
+expected_outcome: |
+  判定は PASS。問題のない変更に対して、存在しない問題を PR 阻止の理由にしない。型チェック・テスト・ビルドの実行結果、テストの質の実測（ミューテーション検出率 100%）、実ブラウザでの表示確認が根拠として示される。
+context:
+  scaffold_script: place-files.sh
