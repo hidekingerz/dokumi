@@ -2,7 +2,10 @@
 // mutator の `--reporter agent` 出力を、dokumi の重大度（blocker / warning / note）に振り分ける。
 // 線引きを毎回の判断に任せず固定するためのスクリプト。
 //
-// 使い方: node triage-mutants.mjs <agent.json> --base <mergeBase> [--root <dir>]
+// 使い方: node triage-mutants.mjs <agent.json> --base <mergeBase> [--mode standard|strict] [--root <dir>]
+//   standard（既定）: どのテストも実行していない変更コードは warning（needsEvidence）。
+//                     他のレベル（実ブラウザ検証など）で確かめた証拠がなければ、呼び出し側が blocker に上げる。
+//   strict:           どのテストも実行していない変更コードは blocker。
 // 終了コード: 0 = blocker なし, 1 = blocker あり（スクリプトの失敗ではない）, 2 = 入力を読めなかった
 //
 // mutator は「変更した関数」単位でミュータントを選び、--include-test-changes を付けると
@@ -23,6 +26,11 @@ const opt = (name, fallback) => {
 };
 const root = opt('--root', process.cwd());
 const base = opt('--base', '');
+const mode = opt('--mode', 'standard');
+if (!['standard', 'strict'].includes(mode)) {
+  console.log(JSON.stringify({ error: `--mode は standard か strict: ${mode}` }, null, 2));
+  process.exit(2);
+}
 
 let report;
 try {
@@ -103,6 +111,7 @@ for (const gap of report.gaps ?? []) {
   let severity = 'warning';
   let reason = '未検出。1 回は修正を試み、残ったら PR 本文に載せる。';
   let pinned = false; // 位置によらず重大度を保つもの
+  let needsEvidence = false;
   if (gap.critical) {
     severity = 'blocker';
     reason = '重要領域の未検出ミュータント。kill するか、人の承認つきで accept する。';
@@ -112,20 +121,31 @@ for (const gap of report.gaps ?? []) {
     reason = '以前は検出できていたが、検出していたテストが消えた。テストを戻すか置き換える。';
     pinned = true;
   } else if (gap.gap === 'notReached') {
-    severity = 'blocker';
-    reason = '変更したコードをどのテストも実行していない。';
+    if (mode === 'strict') {
+      severity = 'blocker';
+      reason = '変更したコードをどのテストも実行していない（strict モード）。';
+    } else {
+      severity = 'warning';
+      needsEvidence = true;
+      reason = '変更したコードをどのテストも実行していない。実ブラウザ検証など他のレベルで振る舞いを確かめた証拠がなければ blocker に上げる。証拠があれば「自動テストなし」として人の判断に回す。';
+    }
   }
   if (!pinned && where === 'changedFunction') {
     severity = lower[severity];
+    needsEvidence = false;
     reason = `変更した関数の中だが、今回書き換えていない行（1 段階下げた）。${gap.gap === 'notReached' ? 'どのテストも実行していない。' : '未検出。'}`;
   } else if (!pinned && where === 'unchangedCode') {
     severity = 'note';
+    needsEvidence = false;
     reason = '今回変更していない既存コード（変更したテストが実行するため対象に入った）。今回の変更の責任ではない。';
   }
   findings.push({
     severity,
     kind: gap.gap,
     where,
+    needsEvidence,
+    // 人の判断が要る warning（自動テストなしで通すか）。それ以外の warning は情報として載せるだけ。
+    needsDecision: needsEvidence,
     key: gap.key,
     file: gap.file,
     line: gap.line,
@@ -165,9 +185,9 @@ for (const finding of report.findings ?? []) {
 // レポートでは groups の 1 行を 1 件の指摘として書き、key は再確認（--only）用に添える。
 const groups = [];
 for (const f of findings.filter((x) => x.key)) {
-  const id = `${f.severity}|${f.file}|${f.scope}|${f.kind}`;
+  const id = `${f.severity}|${f.file}|${f.scope}|${f.kind}|${f.needsEvidence}`;
   let group = groups.find((g) => g.id === id);
-  if (!group) groups.push((group = { id, severity: f.severity, file: f.file, scope: f.scope, kind: f.kind, where: f.where, lines: [], keys: [] }));
+  if (!group) groups.push((group = { id, severity: f.severity, needsEvidence: Boolean(f.needsEvidence), file: f.file, scope: f.scope, kind: f.kind, where: f.where, lines: [], keys: [] }));
   if (!group.lines.includes(f.line)) group.lines.push(f.line);
   group.keys.push(f.key);
 }
@@ -186,6 +206,7 @@ findings.sort((a, b) => order[a.severity] - order[b.severity]);
 console.log(
   JSON.stringify(
     {
+      mode,
       scope: report.scope,
       // score と counts は mutator が対象にした全ミュータント（変更した関数 + 変更したテストが実行する既存コード）の値。
       // 「diff 内 N 件」と書くときは byFile の changedLine / changedFunction を使う。

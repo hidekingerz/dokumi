@@ -32,7 +32,8 @@
 ```markdown
 # dokumi レポート
 
-**判定: FIX**（1 回目）　blocker 2 件 / warning 3 件 / note 1 件
+**判定: FIX**（1 回目）　blocker 2 件 / warning 3 件（うち判断が要るもの 1 件） / note 1 件
+モード: `standard` / `onWarning: report`
 ベース: `origin/main` (a1b2c3d) → 作業ツリー　変更 7 ファイル
 
 ## 要約
@@ -43,7 +44,7 @@
 ## 段階ごとの結果
 | 段階 | 結果 | 補足 |
 |---|---|---|
-| 1 機械ゲート | 通過 | typecheck / lint / test (42 件) / build |
+| 1 機械ゲート | 通過 | typecheck / lint / test (42 件) / build。カバレッジのしきい値（行 80%）: 84.2% で合格 |
 | 2 ごまかし検出 | warning 1 | `any` 1 か所 |
 | 3 要件適合 | blocker 1 | 独立レビューあり。捨てた指摘 1 件 |
 | 4 テストの質 | blocker 1, warning 2 | mutator 0.4.0、変更行の未検出 5 件。全体の検出率 71%（24 件中 17 件、変更したテストが実行する既存コードを含む）。型エラーで未実測 0 |
@@ -73,7 +74,12 @@
 - 場所: `src/features/search/api.ts:12`
 - 内容: API レスポンスを `any` で受けている。スキーマでパースすることを提案。
 
-### W2. 未検出ミュータント 2 件（修正を 1 回試みる）
+### W2. 【判断が要る】ナビゲーションへのリンク追加に自動テストがない
+- 場所: `src/App.tsx:20-25`（どのテストも実行していない、mutator `notReached` 9 件）
+- 確かめたこと: 実ブラウザでリンクから `#/search` に遷移し、検索ページが表示される（`.dokumi/browser-check.head.json` の「ナビから検索ページへ遷移」）
+- 判断してほしいこと: 自動テストなしで通すか、`App` のルーティングのテストを足すか
+
+### W3. 未検出ミュータント 2 件（修正を 1 回試みる）
 - `src/features/search/normalize.ts:8` `trim()` を削除しても落ちない（key: `k3kgc6il0y`）
 - …
 
@@ -156,6 +162,8 @@
 {
   "verdict": "FIX",
   "round": 1,
+  "mode": "standard",
+  "onWarning": "report",
   "base": { "ref": "origin/main", "mergeBase": "a1b2c3d" },
   "summary": { "blocker": 2, "warning": 3, "note": 1 },
   "stages": [
@@ -217,10 +225,12 @@
 ### 項目
 
 - `verdict`：`PASS` / `FIX` / `ESCALATE`。
+- `mode` / `onWarning`：使ったモード。
 - `round`：何回目の検証か（1 から）。3 回目は存在しない（2 回で直らなければ `ESCALATE`）。
 - `stages[].status`：`pass` / `fail` / `skipped`。`skipped` には `detail` に理由を書く。
 - `findings[]`：`blocker` を先に。すべての `blocker` に `evidence.command` と `evidence.output` が必要（なければ `warning` に下げる）。
 - `findings[].fix`：何をどう直すかを具体的に。「テストを改善する」のような指示は不可。
+- `findings[].needsDecision`：warning のうち、人の判断が要るもの（SKILL.md の「判断が要る warning」）に `true`。`onWarning: ask` のとき、これが 1 件でもあれば `verdict` は `ESCALATE` で、同じ内容を `decisionsNeeded` に問いの形で入れる。
 - `findings[].fixTried`：その直し方をコピーの上で試したか。試したなら `fixTrialResult` に結果を書く。試していない直し方は `false` にして、推測であることが分かるようにする。
 - `findings[].recheck`：その指摘が直ったことを確かめるコマンド。再検証で使う。
 - `claimMismatches[]`：完了報告の主張のうち、実際と食い違うもの。対応する指摘の `id` を `finding` に入れる。なければ空配列。

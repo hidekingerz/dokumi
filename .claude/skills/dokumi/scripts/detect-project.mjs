@@ -93,6 +93,41 @@ const jestMajor = major(deps.jest);
 const usesVitePlus = Boolean(deps['vite-plus']);
 const runner = vitestMajor || usesVitePlus ? 'vitest' : jestMajor ? 'jest' : null;
 
+// プロジェクトが自分で決めたカバレッジの基準（しきい値）があるか。あればそれが「どこまでテストを求めるか」の基準になる。
+function detectCoverage() {
+  const configs = ['vitest.config.ts', 'vitest.config.mts', 'vitest.config.js', 'vitest.config.mjs', 'vite.config.ts', 'vite.config.mts',
+    'vite.config.js', 'vite.config.mjs', 'jest.config.ts', 'jest.config.js', 'jest.config.mjs', 'jest.config.cjs', 'jest.config.json', '.nycrc', '.nycrc.json', '.c8rc.json'];
+  let thresholdFile = null;
+  for (const file of configs) {
+    if (!has(file)) continue;
+    const text = readFileSync(join(root, file), 'utf8');
+    if (/\bthresholds?\s*:|coverageThreshold|"(?:check-coverage|branches|lines|functions|statements)"\s*:/.test(text)) {
+      thresholdFile = file;
+      break;
+    }
+  }
+  if (!thresholdFile && pkg.jest?.coverageThreshold) thresholdFile = 'package.json (jest.coverageThreshold)';
+  if (!thresholdFile && (pkg.c8?.['check-coverage'] || pkg.nyc?.['check-coverage'])) thresholdFile = 'package.json (c8 / nyc)';
+  const script = pickScript('test:coverage', 'coverage', 'test:cov', 'test:ci');
+  const provider = ['@vitest/coverage-v8', '@vitest/coverage-istanbul', 'c8', 'nyc'].find((name) => deps[name]) ?? (deps.jest ? 'jest' : null);
+  let command = null;
+  if (script) command = run(script);
+  else if (thresholdFile && deps.vitest && provider) command = 'npx vitest run --coverage';
+  else if (thresholdFile && deps.jest) command = 'npx jest --coverage';
+  return {
+    thresholdsConfigured: Boolean(thresholdFile),
+    thresholdFile,
+    provider,
+    command,
+    note: thresholdFile
+      ? command
+        ? 'しきい値が設定されている。段階 1 でこのコマンドを実行し、不合格なら blocker。'
+        : 'しきい値は設定されているが、実行手段（カバレッジの provider かスクリプト）が見つからない。未実施として報告する。'
+      : 'しきい値の設定なし。カバレッジはプロジェクトの条件ではない。',
+  };
+}
+const coverage = detectCoverage();
+
 const blockers = [];
 if (nodeMajor < 24) blockers.push(`Node.js ${nodeVersion} で実行中（mutator は 24 以上が必要）`);
 if (runner === 'vitest' && !usesVitePlus && vitestMajor < 5) blockers.push(`Vitest ${vitestMajor}（mutator は 5 が必要）`);
@@ -122,6 +157,7 @@ console.log(
       node: nodeVersion,
       nodeSource: localNode ? 'node_modules/.bin/node（npm scripts と npx が使う）' : 'PATH',
       testRunner: runner,
+      coverage,
       mutator: {
         eligible: blockers.length === 0,
         installed: Boolean(deps['@mizchi/mutator']),

@@ -110,7 +110,7 @@ mutator が実行して数えるのは、変更行のミュータントだけで
 ## 重大度の線引き
 
 ```sh
-node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json --base <mergeBase> > .dokumi/mutants-triage.json
+node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json --base <mergeBase> --mode <mode> > .dokumi/mutants-triage.json
 ```
 
 終了コード 1 は「blocker あり」の意味で、スクリプトの失敗ではない（2 が失敗）。
@@ -119,12 +119,14 @@ node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json --base <mergeBase> >
 
 | 重大度 | 対象 | 理由 |
 |---|---|---|
-| blocker | `notReached`（変更コードをどのテストも実行していない） | テストなしで変更を出すのと同じ |
+| モードによる | `notReached`（変更コードをどのテストも実行していない） | `strict` では blocker。`standard` では warning（`needsEvidence`）で、他のレベルで確かめた証拠がなければ blocker に上げる（SKILL.md の段階 4） |
 | blocker | `newTestNoKills`（新規テストが何も検出しない） | テストがあるように見せているだけ |
 | blocker | `skippedTest` / `uncollectedTest` | そのテストは何も検証していない |
 | blocker | `critical: true`（重要領域の未検出） | プロジェクトが「全部検出するか明示的に受け入れる」と決めた場所 |
 | blocker | `detectionRegression` / `recheck: true` | 変更していないコードの検出力を落とした |
 | warning | それ以外の `notDetected` / `notInfected` | 等価ミュータントを含み得るので、PR を止める根拠にはしない |
+
+`notReached` を既定で blocker にしないのは、実行カバレッジを条件にすると、通すためだけのテストが書かれるから。コードを実行するだけで何も確かめないテストを足せば `notReached` は `notDetected`（warning）に変わるので、条件を満たすいちばん安い方法が中身のないテストになってしまう。配線や配置のコードは、単体テストより画面での確認が向いていることも多い。
 
 全部を blocker にしないのは、等価ミュータント（どんな入力でも区別できないもの）が必ず混ざるため。スコアを 100% にすることを目標にすると、実装の細部をアサートする無意味なテストが増える。
 
