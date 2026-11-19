@@ -10,6 +10,7 @@ mutator は、コードを 1 か所ずつ小さく書き換え（ミュータン
 - [導入](#導入)
 - [実行](#実行)
 - [結果の読み方](#結果の読み方)
+- [対象に入る範囲](#対象に入る範囲)
 - [重大度の線引き](#重大度の線引き)
 - [修正と再確認](#修正と再確認)
 - [等価ミュータント](#等価ミュータント)
@@ -40,7 +41,7 @@ Node.js が 24 未満でも、プロジェクトのテストが Node 24 で通�
 
 `npx -y @mizchi/mutator@0.4.0` のようにプロジェクト外から直接実行してはいけない。プロジェクトの Vitest と別の実体が読み込まれ、テストが通っているのに「ミュータントなしでテストが失敗（終了コード 4）」と誤って報告される（0.4.0 で確認）。必ずプロジェクトの `node_modules` に入れてから使う。
 
-`.mutator/`（キャッシュとレポート）を `.gitignore` に追加する。
+`.mutator/`（キャッシュとレポート）は、SKILL.md の段階 0 でローカルの除外設定に入れてある。プロジェクトが mutator を正式に導入するなら `.gitignore` に入れるべきだが、それは検証ではなくプロジェクト側の変更なので、レポートで提案するにとどめる。
 
 ## 実行
 
@@ -70,8 +71,8 @@ npx mutator --since <mergeBase> --include-test-changes --kill-matrix \
 
 JSON の主な項目：
 
-- `score`：検出率（0〜1 の小数。百分率ではない）。diff 内のミュータントだけが対象。
-- `counts`：`Killed` / `Survived` / `NoCoverage` / `Pending` などの件数。
+- `score`：検出率（0〜1 の小数。百分率ではない）。対象は[下の範囲](#対象に入る範囲)。
+- `counts`：`Killed` / `Survived` / `NoCoverage` / `CompileError` / `Pending` などの件数。
 - `gaps`：未検出ミュータント 1 件ごとの記録。`key`、`gap`（穴の種類）、`file`、`line`、`original` → `replacement`、囲む関数のソース（`scope.source`）、実行しているテスト（`coveredBy`）、`fix`（直し方の指針）。
 - `warnings`：`skippedTest`（変更で追加・編集された skip）、`uncollectedTest`（変更したテストファイルがランナーに拾われていない）、`childProcessTest`。
 - `findings`：`mutationGap`、`criticalGap`、`newTestNoKills`、`detectionRegression`、`testNotMeasured`。
@@ -87,11 +88,34 @@ JSON の主な項目：
 
 `mutants: 0 in the diff` でスコアが 100% のときは、対象が何もなかっただけ（テストやドキュメントだけの変更、または `include` の範囲外）。実測できたとは書かない。既定の対象は `src/**` なので、ソースが別の場所にあるなら `--include` で指定する。
 
+## 対象に入る範囲
+
+mutator が実行して数えるのは、変更行のミュータントだけではない。
+
+- **変更した関数の全体。** `--since` は関数単位で対象を決める。1 行だけ変えた関数でも、その関数の他の行のミュータントが入る。
+- **変更したテストが実行する既存コード。** `--include-test-changes` を付けると、追加・変更したテストが通る既存の関数（共通コンポーネントやユーティリティ）も入る。
+
+どちらも今回書き換えていない行を含む。`score` と `counts` はこの全体の値なので、そのまま「diff 内の検出率」と書かない。`triage-mutants.mjs` に `--base` を渡すと、未検出を変更行と突き合わせて 3 つに分ける。
+
+| `where` | 意味 | 扱い |
+|---|---|---|
+| `changedLine` | ミュータントの位置が変更行に重なる | 線引きどおり |
+| `changedFunction` | 変更した関数の中の、書き換えていない行 | 1 段階下げる（blocker → warning、warning → note） |
+| `unchangedCode` | 変更したテストが実行するだけの既存コード | note（今回の変更の責任ではない） |
+
+レポートに件数を書くときは、`byFile` の内訳から「変更行の未検出 N 件」と書き、全体の `score` には「変更した関数と、変更したテストが実行する既存コードを含む」と添える。
+
+**`CompileError` は未実測。** 型検査を通らないミュータントは実行されず、`score` の分母にも入らない。変更の中心が型で縛られた値（文字列リテラル型の既定値、ユニオンの分岐など）だと、肝心の変更がミュータントにならない。`compileErrors` が多いとき、また変更行のミュータントが 0 件のときは、「mutator はこの変更を測っていない」とレポートに書き、段階 5 で直接確かめる。
+
 ## 重大度の線引き
 
 ```sh
-node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json > .dokumi/mutants-triage.json
+node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json --base <mergeBase> > .dokumi/mutants-triage.json
 ```
+
+終了コード 1 は「blocker あり」の意味で、スクリプトの失敗ではない（2 が失敗）。
+
+出力の `groups` は、同じ関数・同じ種類の穴をまとめたもの。レポートではこの 1 行を 1 件の指摘として書く（「`App` のルーティングをどのテストも実行していない（9 件）」）。key は再確認用に添える。
 
 | 重大度 | 対象 | 理由 |
 |---|---|---|
@@ -160,9 +184,9 @@ mutator には `mutator accept <key> --reason "..."` で `mutator.accepted.json`
 実測の代わりに、手動の抜き取り検査を行う。原理は同じ。
 
 1. 変更した関数・コンポーネントごとに、要件上もっとも大事な分岐か計算を 1〜2 か所選ぶ。
-2. そこを壊す（条件を反転、境界を 1 ずらす、戻り値を固定値に、副作用の呼び出しを削除）。
+2. そこをコピーの上で壊す（条件を反転、境界を 1 ずらす、戻り値を固定値に、副作用の呼び出しを削除）。
 3. 関係するテストを実行する。
-4. **必ず元に戻す。** `git diff` で検証前の差分と一致することを確かめる（`git stash` ではなく、編集前に `git diff > .dokumi/before.patch` を取り、後で比較する）。
+4. 壊すのは作業ツリーではなくコピーの上で行う（`references/proving.md` の「壊して確かめる・直して確かめる」）。作業ツリーを直接編集すると、戻し忘れが検証対象を変えてしまう。
 5. テストが落ちなければ、そのテストは壊れた振る舞いに気づかない。壊した内容、実行したコマンド、出力を証拠として記録する。
 
 重大度は mutator のときと同じ線引き（どのテストも実行していない変更コードは blocker、落ちなかっただけなら warning）。

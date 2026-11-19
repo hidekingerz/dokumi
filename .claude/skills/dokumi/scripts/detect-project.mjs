@@ -100,11 +100,13 @@ if (runner === 'jest') blockers.push('Jest は ESM モードのみの実験的�
 if (!runner) blockers.push('Vitest も Jest も見つからない');
 
 const base = resolveBase();
+// 検証自身の作業ファイルは変更に数えない。
+const ownFiles = /^(\.dokumi|\.mutator)\//;
 const changed = base.mergeBase
   ? [
       ...git('diff', '--name-only', base.mergeBase).split('\n'),
       ...git('ls-files', '--others', '--exclude-standard').split('\n'),
-    ].filter(Boolean)
+    ].filter((f) => f && !ownFiles.test(f))
   : [];
 const uiPattern = /\.(tsx|jsx|vue|svelte|astro|css|scss|sass|less|html|mdx)$|(^|\/)(tailwind|postcss)\.config\./;
 const testPattern = /(\.|\/)(test|spec)\.[cm]?[jt]sx?$|(^|\/)__tests__\//;
@@ -129,6 +131,7 @@ console.log(
       playwrightInstalled: Boolean(deps['@playwright/test'] || deps.playwright),
       diff: {
         files: changed.length,
+        all: changed,
         touchesUi: changed.some((f) => uiPattern.test(f)),
         uiFiles: changed.filter((f) => uiPattern.test(f)),
         testFiles: changed.filter((f) => testPattern.test(f)),
