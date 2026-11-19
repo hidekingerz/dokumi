@@ -76,6 +76,8 @@ warning の全部を人に確認させると、確認が形だけになる。人
 
 要件と完了報告は `.dokumi/requirements.md` と `.dokumi/claims.md` に書き出す。別エージェントに渡すためと、後で突き合わせるため。
 
+要件に「実データで確かめる」条件があるとき（「実データ 51 点で上位が入れ替わる」など）は、そのデータの場所も入力に含める。リポジトリにも会話にもなければ、始める前にユーザーに尋ねる。受け取ったデータは `.dokumi/` の下か検証対象の外に置き、コミットしない。手に入らなければ、その条件は「未確認」として残す。
+
 要件や完了報告が作業ツリーにファイルとして置かれている場合（未追跡の `REQUIREMENTS.md` など）、それは検証の入力であって変更の一部ではない。「要件にない変更」には数えず、PR に混ざらないよう note で知らせる。
 
 `.dokumi/` は作業用ディレクトリ。検証の作業ファイルで PR の差分を変えないよう、`.gitignore` ではなくリポジトリのローカル除外設定に入れる（下の段階 0）。
@@ -157,10 +159,18 @@ node $SKILL/scripts/scan-diff.mjs --base <mergeBase> > .dokumi/scan.json
 **`mutator.eligible` が true の場合**、`references/mutation.md` に従って mutator を実行し、結果を振り分ける。
 
 ```sh
-npx mutator --since <mergeBase> --include-test-changes --kill-matrix \
-  --time-budget 300 --reporter agent > .dokumi/mutants.json 2> .dokumi/mutants.log
+# 1 回目：変更行だけを測る。判定の土台はこの結果
+npx mutator --since <mergeBase> --time-budget 300 --reporter agent \
+  > .dokumi/mutants.json 2> .dokumi/mutants.log
 node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json --base <mergeBase> > .dokumi/mutants-triage.json
+
+# 2 回目：範囲を広げる。1 回目に Pending が残らなかったときだけ
+npx mutator --since <mergeBase> --include-test-changes --kill-matrix --time-budget 300 --reporter agent \
+  > .dokumi/mutants-wide.json 2> .dokumi/mutants-wide.log
+node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants-wide.json --base <mergeBase> > .dokumi/mutants-wide-triage.json
 ```
+
+2 回に分けるのは、広げた範囲が時間枠に収まらないことがあるため。変更したテストが画面全体を描画していると、対象は既存コードのほぼ全部に広がる（実例：変更行 48 件に対して 1386 件。5 分で 8 割が未実行のまま打ち切られ、変更行の一部も測られなかった）。先に変更行を測っておけば、2 回目が打ち切られても判定の土台は残る。2 回目からは、1 回目では出ない種類の指摘（何も検出しない新規テスト、既存の検出力の低下、今回書き換えていない行の穴）だけを足す。2 回目に `Pending` が残ったら、それらは「未判定」としてレポートに書き、時間枠を延ばして粘らない（`references/mutation.md` の「実行」）。
 
 `--mode <mode>` も渡す。振り分けの線引きはスクリプトに固定してある（何も検出しない新規テスト、重要領域の未検出、skip されたテスト、既存の検出力の低下が blocker。それ以外の未検出は warning。今回書き換えていない行の穴は 1 段階下げるか note）。
 
