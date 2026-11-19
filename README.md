@@ -14,6 +14,7 @@ agent向け検証スキル群
 | [使い方](docs/usage.md) | 導入、呼び出し方、結果の見方、厳しさの切り替え |
 | [判定基準](docs/criteria.md) | 何を調べ、何を PR の条件にしているか |
 | [作業レポート](docs/work-report-2026-11-19.md) | 初版の作成と試験の記録 |
+| [試用記録: coordination PR #69](docs/eval-coordination-pr69-2026-11-19.md) | 実プロジェクトの変更に当てた結果と、分かった課題 |
 
 ## 使い方
 
