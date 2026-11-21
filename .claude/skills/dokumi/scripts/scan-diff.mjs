@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // diff の追加行だけを対象に「完成したように見せる近道」を機械的に検出し、JSON で出力する。
 // 既存コードの問題は拾わない（今回の変更が持ち込んだものだけを見る）。
-// 使い方: node scan-diff.mjs [--base <ref>] [--root <dir>]
+// 使い方: node scan-diff.mjs [--base <ref>] [--root <dir>] [--all]
+//   --all: 差分ではなく、追跡済みと未追跡の全ファイルの全行を対象にする（リポジトリ全体を検証するとき）。
+//          変更の前後を比べる検査（テストの削減、設定の変更、依存の追加）は行わない。
 // 終了コード: 0 = blocker なし, 1 = blocker あり, 2 = 実行できなかった
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -33,7 +35,8 @@ function resolveMergeBase() {
   return null;
 }
 
-const base = resolveMergeBase();
+const all = args.includes('--all');
+const base = all ? { ref: null, mergeBase: null } : resolveMergeBase();
 if (!base) {
   console.log(JSON.stringify({ error: 'ベースブランチを特定できません。--base <ref> を指定してください。' }, null, 2));
   process.exit(2);
@@ -44,6 +47,8 @@ const TEST = /(\.|\/)(test|spec)\.[cm]?[jt]sx?$|(^|\/)__tests__\/|(^|\/)e2e\//;
 const IGNORED = /(^|\/)(node_modules|dist|build|coverage|\.next|\.nuxt|\.output|\.mutator|\.dokumi)\//;
 // このスキル自身の検査スクリプトや lint 設定は、検出対象の文字列をパターンとして含むので除外する。
 const SELF = /(^|\/)\.claude\/skills\/dokumi\//;
+// 等価ミュータントの受け入れの記録。新しく作られた場合も含めて検出する（エージェントが自分で受け入れていないかを見るため）。
+const ACCEPTED = /(^|\/)mutator\.accepted\.json$/;
 
 // where: 'code' = テスト以外のソース, 'test' = テスト, 'any' = 両方
 const RULES = [
@@ -65,7 +70,8 @@ const RULES = [
     why: 'lint を直さずに無効化している。' },
   { id: 'swallowed-error', where: 'code', severity: 'warning', re: /catch\s*(?:\([^)]*\))?\s*\{\s*\}|\.catch\(\s*(?:\(\s*\w*\s*\)|\w+)\s*=>\s*(?:\{\s*\}|null|undefined|void 0)\s*\)/,
     why: '例外を握りつぶしている。根本原因を隠していないか確認する。' },
-  { id: 'stub', where: 'code', severity: 'warning', re: /not\s+(?:yet\s+)?implemented|未実装|仮実装|\bplaceholder\b(?!\s*[=:]|\w)|\bdummy\b|\bmock(?:ed)?\s+data\b/i,
+  { id: 'stub', where: 'code', severity: 'warning', // placeholder は単独では拾わない。入力欄の属性、CSS のクラス名、変数名として正当に使われることのほうが多い。
+    re: /not\s+(?:yet\s+)?implemented|未実装|仮実装|\bplaceholder\s+(?:implementation|impl|logic|data|response|for\s+now|until)\b|\b(?:temporary|just\s+a|as\s+a)\s+placeholder\b|\bdummy\b|\bmock(?:ed)?\s+data\b/i,
     why: 'スタブや仮実装らしき記述。完了報告と食い違っていないか確認する。' },
   { id: 'console', where: 'code', severity: 'warning', re: /\bconsole\.(?:log|debug|trace|dir|table)\s*\(/,
     why: 'デバッグ出力が残っている。' },
@@ -93,7 +99,7 @@ function scanLine(file, line, text) {
 
 // 1. 追跡済みファイルの追加行（コミット済み + 作業ツリー）
 const status = new Map();
-for (const row of tryGit('diff', '--name-status', '-M', base.mergeBase).split('\n').filter(Boolean)) {
+for (const row of all ? [] : tryGit('diff', '--name-status', '-M', base.mergeBase).split('\n').filter(Boolean)) {
   const parts = row.split('\t');
   status.set(parts[parts.length - 1], parts[0][0]);
 }
@@ -102,7 +108,7 @@ let lineNo = 0;
 let removedTestCases = 0;
 let addedTestCases = 0;
 const TEST_CASE = /^\s*(?:it|test)(?:\.each\b[^(]*\([^)]*\))?\s*\(/;
-for (const row of tryGit('diff', '--unified=0', '--no-color', '-M', base.mergeBase).split('\n')) {
+for (const row of all ? [] : tryGit('diff', '--unified=0', '--no-color', '-M', base.mergeBase).split('\n')) {
   if (row.startsWith('+++ ')) {
     file = row === '+++ /dev/null' ? null : row.slice(6);
     continue;
@@ -124,11 +130,13 @@ for (const row of tryGit('diff', '--unified=0', '--no-color', '-M', base.mergeBa
   }
 }
 
-// 2. 未追跡の新規ファイルは全行が追加行
+// 2. 未追跡の新規ファイルは全行が追加行。--all のときは追跡済みのファイルも同じ扱いにする
 const untracked = tryGit('ls-files', '--others', '--exclude-standard').split('\n').filter(Boolean);
-for (const path of untracked) {
-  if (IGNORED.test(path) || SELF.test(path) || !CODE.test(path)) continue;
-  status.set(path, 'A');
+const tracked = all ? tryGit('ls-files').split('\n').filter(Boolean) : [];
+for (const path of [...tracked, ...untracked]) {
+  if (!all && ACCEPTED.test(path) && !IGNORED.test(path)) status.set(path, 'A');
+  if (IGNORED.test(path) || SELF.test(path) || !CODE.test(path) || !existsSync(join(root, path))) continue;
+  if (!all) status.set(path, 'A');
   readFileSync(join(root, path), 'utf8')
     .split('\n')
     .forEach((text, i) => {
@@ -146,9 +154,11 @@ for (const [path, st] of status) {
     add('snapshot-changed', 'warning', path, 0, 'スナップショットを更新', '差分を読んで意図した変化だけか確認する。失敗を通すための一括更新でないこと。');
   if (
     st !== 'A' &&
-    /(^|\/)(?:\.eslintrc[^/]*|eslint\.config\.[cm]?[jt]s|biome\.jsonc?|\.oxlintrc[^/]*|tsconfig[^/]*\.json|vitest\.config\.[cm]?[jt]s|jest\.config\.[cm]?[jt]s|playwright\.config\.[cm]?[jt]s|mutator\.config\.[^/]+|mutator\.accepted\.json)$|^\.github\/workflows\//.test(path)
+    /(^|\/)(?:\.eslintrc[^/]*|eslint\.config\.[cm]?[jt]s|biome\.jsonc?|\.oxlintrc[^/]*|tsconfig[^/]*\.json|vitest\.config\.[cm]?[jt]s|jest\.config\.[cm]?[jt]s|playwright\.config\.[cm]?[jt]s|mutator\.config\.[^/]+)$|^\.github\/workflows\//.test(path)
   )
     add('guardrail-config-changed', 'warning', path, 0, '検査の設定ファイルを変更', 'lint・型・テスト・CI の基準を緩めて通していないか、差分を読んで確認する。');
+  if (st !== 'D' && ACCEPTED.test(path))
+    add('mutants-accepted', 'warning', path, 0, '等価ミュータントの受け入れを記録', '足された key が、人が了承したものと一致するか確かめる。了承のない受け入れは修正ではない。');
 }
 if (removedTestCases > addedTestCases)
   add('test-cases-reduced', 'warning', '(tests)', 0, `テストケースの削除 ${removedTestCases} 件 > 追加 ${addedTestCases} 件`, 'テストが減っている。要件上不要になったのか、通すために消したのかを確認する。');
@@ -180,7 +190,7 @@ findings.sort((a, b) => order[a.severity] - order[b.severity] || a.file.localeCo
 const count = (s) => findings.filter((f) => f.severity === s).length;
 console.log(
   JSON.stringify(
-    { base, summary: { blocker: count('blocker'), warning: count('warning'), note: count('note') }, findings },
+    { base, all, summary: { blocker: count('blocker'), warning: count('warning'), note: count('note') }, findings },
     null,
     2,
   ),
