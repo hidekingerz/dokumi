@@ -18,7 +18,22 @@ mutator がプロジェクトに入っていない場合：
 
 ## 導入
 
-`.claude/skills/dokumi/` を、対象リポジトリの `.claude/skills/` にコピーする。全リポジトリで使うなら `~/.claude/skills/` に置く。
+入れ方は 2 つある。どちらでも動きは同じ。
+
+### プラグインとして入れる
+
+Claude Code のセッションの中で実行する。
+
+```
+/plugin marketplace add hidekingerz/claude-plugins
+/plugin install dokumi@hidekingerz
+```
+
+スキル名は `dokumi:dokumi` になる。スキルは対象リポジトリの外（プラグインのキャッシュ）に置かれるので、対象リポジトリには何も足されない。新しい版を取り込むときは `/plugin marketplace update hidekingerz`。
+
+### リポジトリにコピーする
+
+スキルをリポジトリと一緒に管理したいとき、手順を手元で書き換えたいときに使う。`.claude/skills/dokumi/` を、対象リポジトリの `.claude/skills/` にコピーする。全リポジトリで使うなら `~/.claude/skills/` に置く。
 
 ```sh
 rsync -a --exclude evals <このリポジトリ>/.claude/skills/dokumi <対象リポジトリ>/.claude/skills/

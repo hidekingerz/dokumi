@@ -17,7 +17,16 @@ agent向け検証スキル群
 
 ## 使い方
 
-`.claude/skills/dokumi/` を、対象リポジトリの `.claude/skills/`（または `~/.claude/skills/`）にコピーする（`evals/` は除く）。エージェントに「PR 前に dokumi で検証して」と頼むか、実装完了時に自動で呼ばれる。
+Claude Code のセッションの中で、プラグインとして入れる。
+
+```
+/plugin marketplace add hidekingerz/claude-plugins
+/plugin install dokumi@hidekingerz
+```
+
+リポジトリと一緒に管理したいときは、`.claude/skills/dokumi/` を対象リポジトリの `.claude/skills/`（または `~/.claude/skills/`）にコピーする（`evals/` は除く）。
+
+入れた後は、エージェントに「PR 前に dokumi で検証して」と頼むか、実装完了時に自動で呼ばれる。
 
 厳しさは切り替えられる。プロジェクトにカバレッジのしきい値があればそれに従い、なければ `mode`（`standard` / `strict`）で決まる。warning を PR 前に人へ確認させたいときは `onWarning: ask`。指定は呼び出し時の指示か、プロジェクト直下の `dokumi.config.json`。
 
