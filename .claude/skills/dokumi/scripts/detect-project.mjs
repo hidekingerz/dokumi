@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // 検証対象プロジェクトの構成を調べ、dokumi の各段階で使うコマンドと適用可否を JSON で出力する。
-// 使い方: node detect-project.mjs [--base <ref>] [--root <dir>]
+// 使い方: node detect-project.mjs [--base <ref>] [--root <dir>] [--all]
+//   --all: 差分ではなく、追跡済みと未追跡の全ファイルを対象にする（リポジトリ全体を検証するとき）。
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
@@ -163,16 +164,43 @@ function checkEngines() {
 }
 
 const base = resolveBase();
-// 検証自身の作業ファイルは変更に数えない。
-const ownFiles = /^(\.dokumi|\.mutator)\//;
-const changed = base.mergeBase
-  ? [
-      ...git('diff', '--name-only', base.mergeBase).split('\n'),
-      ...git('ls-files', '--others', '--exclude-standard').split('\n'),
-    ].filter((f) => f && !ownFiles.test(f))
-  : [];
+const whole = args.includes('--all');
+// 検証自身の作業ファイルと、対象リポジトリに置かれたこのスキル自身は、変更に数えない。
+const ownFiles = /^(\.dokumi|\.mutator)\/|(^|\/)\.claude\/skills\/dokumi\//;
+const changed = (
+  whole
+    ? [...git('ls-files').split('\n'), ...git('ls-files', '--others', '--exclude-standard').split('\n')]
+    : base.mergeBase
+      ? [...git('diff', '--name-only', base.mergeBase).split('\n'), ...git('ls-files', '--others', '--exclude-standard').split('\n')]
+      : []
+).filter((f) => f && !ownFiles.test(f));
 const uiPattern = /\.(tsx|jsx|vue|svelte|astro|css|scss|sass|less|html|mdx)$|(^|\/)(tailwind|postcss)\.config\./;
 const testPattern = /(\.|\/)(test|spec)\.[cm]?[jt]sx?$|(^|\/)__tests__\//;
+
+// スキルの試験用ファイルや検証の作業ファイルのうち、テストらしい名前のもの。
+// プロジェクトのテストランナーは include を絞っていなければこれらも拾い、機械ゲートを落とす。
+function testFilesUnder(dir, limit = 20) {
+  const found = [];
+  const walk = (rel) => {
+    let entries;
+    try {
+      entries = readdirSync(join(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (found.length >= limit) return;
+      const path = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name !== 'node_modules' && entry.name !== '.git') walk(path);
+      } else if (entry.isFile() && testPattern.test(path)) found.push(path);
+    }
+  };
+  walk(dir);
+  return found;
+}
+const testFilesUnderSkills = testFilesUnder('.claude/skills');
+const testFilesUnderWork = testFilesUnder('.dokumi');
 
 console.log(
   JSON.stringify(
@@ -196,7 +224,17 @@ console.log(
       playwrightInstalled: Boolean(deps['@playwright/test'] || deps.playwright),
       // project: プロジェクトの依存から読める / environment: 環境に入っているものを使える / null: どちらにもない
       playwrightAvailable: locatePlaywright(),
+      interference: {
+        testFilesUnderSkills,
+        testFilesUnderWork,
+        note:
+          testFilesUnderSkills.length + testFilesUnderWork.length > 0
+            ? 'テストらしい名前のファイルが .claude/skills か .dokumi にある（各 20 件まで列挙）。プロジェクトのテストランナーや lint が拾うと、変更と無関係に機械ゲートが落ちる。段階 1 はこれらのパスを除いて実行する。'
+            : null,
+      },
       diff: {
+        // whole: true なら差分ではなく全ファイルが対象（--all）。
+        whole,
         files: changed.length,
         all: changed,
         touchesUi: changed.some((f) => uiPattern.test(f)),
