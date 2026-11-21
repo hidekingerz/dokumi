@@ -4,14 +4,21 @@
 
 ## 1. 何を確かめるかを先に決める
 
-`.dokumi/requirements.md` の各項目を、画面上の操作と期待結果に書き直す。
+`.dokumi/requirements.md` の各項目を、画面上の操作と期待結果に書き直し、`.dokumi/checks.md` に表で残す。**要件の番号を 1 つも飛ばさない。** 全部の番号を表に並べてから、操作を埋める。
 
-| 要件 | 操作 | 期待する結果 |
-|---|---|---|
-| 検索欄が空なら検索ボタンを押せない | `/search` を開く | ボタンが disabled |
-| | 文字を入力する | ボタンが有効になる |
+| 要件 | 確かめる場所 | 操作 | 期待する結果 |
+|---|---|---|---|
+| R1 検索欄が空なら検索ボタンを押せない | 画面 | `/search` を開く | ボタンが disabled |
+| | 画面 | 文字を入力する | ボタンが有効になる |
+| R2 取得に失敗したらエラーを表示する | 画面 | API に 500 を返させて検索する | 「検索に失敗しました」が出る |
+| R3 検索語は前後の空白を除いて送る | 段階 3 の再現テスト | （画面に現れない） | |
+| R4 履歴は 30 日で消える | 未確認 | （日付を進める手段がない） | |
 
-書き直せない要件（画面に現れないもの）は、この段階の対象外として他の段階に任せる。
+- 画面に現れない要件は、どの段階の何で確かめるかを書く。どこでも確かめられないなら「未確認」と書く。空欄のまま残さない。
+- 仕様書の節が要件のときは、節ごとに少なくとも 1 行を置く。メニュー、複数選択、取り消しのように操作の種類が違う節は、後回しにすると丸ごと抜ける。
+- 「すべての操作で」「失敗したときは必ず」のように範囲で書かれた要件は、当てはまる操作を先に列挙し、1 つずつ行にする。代表の 1 つで済ませない。
+
+この表を作るのは、確認項目が 1 つもない要件を見つけるため。思いついた項目だけを確かめると、全部通っても、それは「確かめた項目は通った」という意味でしかない（実例：62 項目が全部通って PASS を出した後、同じコードで仕様書の残りの節を確認対象に足したら、blocker が 5 件出た）。
 
 変更したコンポーネントがどの画面で使われているかは、段階 5 の結果を使う。共有コンポーネントを変えたなら、使っている画面のうち代表的なものを 2〜3 か所確かめる。
 
@@ -48,6 +55,33 @@ curl -sf <url> >/dev/null && echo "まだ動いている" || echo stopped
 
 ベースと見比べるときは、ベースの worktree（`references/proving.md`）でも同じ方法で別のポートに起動する。
 
+### 開発サーバーがないとき（ブラウザ拡張機能）
+
+ブラウザ拡張機能は、ビルドした出力（`manifest.json` のあるディレクトリ）を Chromium に読み込ませて開く。`chrome.bookmarks` などの拡張機能の API も実物が動くので、モックでは再現しない API の規則まで確かめられる。
+
+```js
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+const { chromium } = createRequire(import.meta.url)('playwright');
+
+const dist = resolve(process.env.DIST ?? 'dist'); // ベースと比べるときは、ベースの worktree でビルドした出力を渡す
+const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'dokumi-profile-')), {
+  channel: 'chromium', // Playwright 同梱の Chromium。この指定で、ヘッドレスでも拡張機能が動く
+  headless: true,
+  args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`],
+});
+const page = await ctx.newPage();
+await page.goto('chrome://newtab/'); // 新しいタブを置き換える拡張機能の場合。chrome-extension://<id>/newtab.html に移る
+```
+
+- 拡張機能は、プロファイルを指定して起動した場合（`launchPersistentContext`）にだけ読み込める。プロファイルは実行のたびに新しい一時ディレクトリにする。使い回すと、前の実行で作ったブックマークや設定が残る。
+- 製品版の Google Chrome と Edge は `--load-extension` を受け付けない。Playwright 同梱の Chromium を使う。
+- ポップアップやオプションのページは `chrome-extension://<id>/<ページ>.html` を直接開く。id は `ctx.serviceWorkers()` か、開いたページの URL から読む。
+- 拡張機能のページは CSP が厳しく、ページへのスクリプトの差し込み（`page.addScriptTag`）は拒否される。`page.evaluate` は使える。
+- 確認に使うデータ（ブックマーク、履歴）は、`page.evaluate` から拡張機能の API を呼んで作る。
+
 ## 3. 操作して証拠を残す
 
 Playwright のスクリプトを `.dokumi/browser-check.mjs` に書いて実行する。手作業の確認ではなくスクリプトにするのは、修正後やベースに対して同じ確認を再実行できるようにするため。
@@ -55,7 +89,7 @@ Playwright のスクリプトを `.dokumi/browser-check.mjs` に書いて実行�
 下は形を示す例。URL、ルーティングの方式（パスかハッシュか）、要素の名前はプロジェクトに合わせて書き換える。
 
 ```js
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 // require 経由で読む。プロジェクトに Playwright がなく、環境に入っているもの（NODE_PATH）を使う場合、
 // ESM の import では見つからないため。
@@ -77,19 +111,20 @@ for (const viewport of [{ name: 'mobile', width: 375, height: 812 }, { name: 'de
   page.on('pageerror', (e) => note('pageerror', String(e)));
   page.on('requestfailed', (r) => note('requestfailed', `${r.method()} ${r.url()}`));
   page.on('response', (r) => r.status() >= 400 && note('http', `${r.status()} ${r.url()}`));
-  const check = (name, pass, detail) => results.push({ viewport: viewport.name, check: name, pass, detail });
+  // 1 つ目の引数は要件の番号。要件に対応しない確認（横スクロールなど）は null。
+  const check = (req, name, pass, detail) => results.push({ viewport: viewport.name, req, check: name, pass, detail });
 
   await page.goto(`${BASE}/#/search`);
   // 遷移や操作の後は、期待する要素が現れるのを待ってから値を読む。
   // 待たずに読むと、描画前の状態を読んで偽の不合格になる。
   const button = page.getByRole('button', { name: '検索' });
   await button.waitFor();
-  check('空のとき検索ボタンが無効', await button.isDisabled());
+  check('R1', '空のとき検索ボタンが無効', await button.isDisabled());
 
   await page.getByLabel('キーワード').fill('りんご');
   await button.click();
   await page.getByRole('listitem').first().waitFor();
-  check('検索結果が表示される', (await page.getByRole('listitem').allTextContents()).join(' | ').includes('りんご'),
+  check('R1', '入力して検索すると結果が表示される', (await page.getByRole('listitem').allTextContents()).join(' | ').includes('りんご'),
     await page.getByRole('listitem').allTextContents());
 
   // エラー表示の確認: 失敗を意図して起こす
@@ -97,21 +132,26 @@ for (const viewport of [{ name: 'mobile', width: 375, height: 812 }, { name: 'de
   await page.route('**/api/items*', (route) => route.fulfill({ status: 500, body: '{}' }));
   await button.click();
   const shown = await page.getByText('検索に失敗しました').waitFor({ timeout: 3000 }).then(() => true, () => false);
-  check('取得失敗時にエラーを表示する', shown);
+  check('R2', '取得失敗時にエラーを表示する', shown);
   await page.unroute('**/api/items*');
   expected = false;
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
-  check('横スクロールが出ない', !overflow);
+  check(null, '横スクロールが出ない', !overflow);
 
   await page.screenshot({ path: `.dokumi/shots/search-${TAG}-${viewport.name}.png`, fullPage: true });
   await page.close();
 }
 await browser.close();
-writeFileSync(`.dokumi/browser-check.${TAG}.json`, JSON.stringify({ results, problems }, null, 2));
-console.log(JSON.stringify({ results, problems }, null, 2));
+// 確認項目が 1 つもない要件。不合格ではないが、他の段階の証拠で埋まらなければ「未確認」としてレポートに載る。
+const required = [...new Set(readFileSync('.dokumi/requirements.md', 'utf8').match(/\bR\d+\b/g) ?? [])];
+const uncovered = required.filter((id) => !results.some((r) => r.req === id));
+writeFileSync(`.dokumi/browser-check.${TAG}.json`, JSON.stringify({ results, problems, uncovered }, null, 2));
+console.log(JSON.stringify({ results, problems, uncovered }, null, 2));
 process.exit(results.every((r) => r.pass) && problems.length === 0 ? 0 : 1);
 ```
+
+`uncovered` に残った番号は、`.dokumi/checks.md` で「画面」以外の場所を割り当てた要件か、確かめ忘れた要件のどちらか。後者なら確認項目を足す。足せないものは「未確認」に回す。
 
 ### 読み方と待ち方
 
@@ -128,6 +168,17 @@ process.exit(results.every((r) => r.pass) && problems.length === 0 ? 0 : 1);
 
   再計算に遅延（デバウンス、`setTimeout`）がある画面では、その間に要素が一時的に消えることもある。位置や文字を読む直前に、要素があることをもう一度待つ。
 - **閉じた `<details>` や非表示の要素の文字は `innerText` に出ない。** `innerText` は表示されている文字だけを返す。折りたたまれた中身を読むなら `textContent` を使うか、開いてから読む。ユーザーに見えていることを確かめたいときは `innerText`、内容が正しいことを確かめたいときは `textContent`、と使い分ける。
+
+### 操作の落とし穴
+
+確認側の誤りは、待ち方のほかに、操作の組み立てでも起きる（実例：最初に出た不合格 18 件のうち 12 件が、確認スクリプト側の誤りだった）。
+
+- **状態を作ったら、検査の前に、その状態になっていることを確かめる。** 「複数選択した状態で〜」を確かめるなら、選択された要素の数を先に読む。作ったつもりの状態ができていないと、その後の確認は別の状態を見たまま全部通る。
+- **修飾キーつきクリックの意味は、アプリごとに違う。** Cmd / Ctrl + クリックが複数選択とは限らない（「バックグラウンドで開く」の実装もある）。仕様かコードで確かめてから使う。
+- **macOS では Ctrl + クリックが右クリックになる。** Ctrl を使う操作は macOS では確かめられない。確かめていないと書く。
+- **`dragTo` は、ドラッグの途中でページをスクロールして、掴む対象がずれることがある。** viewport を縦に広げてスクロールをなくし、`page.mouse.move` / `down` / `up` で組み立てる。移動は `{ steps: 10 }` のように 2 回以上に分ける（1 回の移動では `dragover` が出ないブラウザがある）。
+- **スクロールの直後に開いたメニューは、すぐ閉じることがある。** スクロールでメニューを閉じる実装だと、要素を画面に入れるためのスクロールが、直後の右クリックで開いたメニューを閉じる。スクロールが止まるのを待ってから開く。
+- **前の確認の失敗は、次の確認に持ち越される。** 開いたままのダイアログ、選択されたままの項目、消えなかったデータが残る。確認ごとにデータを作り直すか、ページを読み直す。
 
 ### 配置を測るとき
 
@@ -182,7 +233,7 @@ props やデータ次第の状態（0 件、大量、長い文字列）が、ア
 | 横方向のはみ出し | `scrollWidth > clientWidth` |
 | キーボード操作 | `Tab` で変更した操作要素に到達でき、`Enter` / `Space` で動き、フォーカスが見える（フォーカス時のスクリーンショット） |
 | 状態の表示 | ローディング、空、エラーを実際に出す。`page.route()` で応答を遅らせる、空配列を返す、500 を返す |
-| アクセシビリティ違反 | `@axe-core/playwright` か `axe-core` がプロジェクトか環境にあれば実行（`page.addScriptTag({ path })` で読み込んで `axe.run()`）。どちらもなければ依存を足さず、「axe なしのため自動検査は未実施」と書き、キーボード操作と名前の確認を手で行う |
+| アクセシビリティ違反 | axe を実行する（`references/axe.md`）。プロジェクトにも環境になければ、プロジェクトの外に取得して使う。取得もできないとき（ネットワークに出られない）だけ「axe なしのため自動検査は未実施」と書き、キーボード操作と名前の確認を手で行う |
 | 長い文字列、大量データ | 入力や `page.route()` の応答で与え、崩れないかをスクリーンショットで確認 |
 
 全項目を毎回やる必要はない。変更が触れた範囲に関係するものを選び、選ばなかった項目は「対象外」と書く。
@@ -204,7 +255,7 @@ props やデータ次第の状態（0 件、大量、長い文字列）が、ア
 | 要件の操作が期待どおりに動かない | blocker |
 | 変更によって新たに出たコンソールエラー、未処理例外、失敗リクエスト | blocker |
 | 変更した画面のはみ出し、操作不能 | blocker |
-| キーボードで操作できない、axe の critical / serious 違反（変更した要素） | blocker |
+| キーボードで操作できない、axe の critical / serious 違反（変更した要素。リポジトリ全体が対象のときの読み方は `references/whole-repo.md`） | blocker |
 | axe の moderate / minor 違反、見た目の軽微な崩れ | warning |
 | 現実には起きにくい極端な入力（数百文字の切れ目のない文字列など）でだけ起きる崩れ | warning |
 | 変更前から存在した問題 | note（今回の変更の責任ではないが、気づいたので載せる） |

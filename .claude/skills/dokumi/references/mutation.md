@@ -35,11 +35,13 @@ Node.js が 24 未満でも、プロジェクトのテストが Node 24 で通�
 
 | 状況 | 対応 |
 |---|---|
-| `devDependencies` に既にある | そのまま `npx mutator` で使う。バージョンが違えば、そのバージョンの出力に従う。 |
+| `devDependencies` に既にある | そのまま `npx mutator` で使う。バージョンが違えば、そのバージョンの出力に従う（下）。 |
 | ない、npm のプロジェクト | `npm i --no-save @mizchi/mutator@0.4.0`。`package.json` を変えずに使える。 |
 | ない、pnpm / yarn / bun のプロジェクト | 依存の追加は PR の差分を変えるので、勝手に入れない。[代替手順](#mutator-が使えないとき)に切り替え、レポートで導入を提案する。ユーザーが導入を許可済みなら `devDependencies` に追加する。 |
 
 `npx -y @mizchi/mutator@0.4.0` のようにプロジェクト外から直接実行してはいけない。プロジェクトの Vitest と別の実体が読み込まれ、テストが通っているのに「ミュータントなしでテストが失敗（終了コード 4）」と誤って報告される（0.4.0 で確認）。必ずプロジェクトの `node_modules` に入れてから使う。
+
+プロジェクトに入っているバージョンが `0.4.0` でないときは、フラグと出力の項目名を記憶や推測で書かない。`npx mutator --help` と、実際の出力のキー（`node -e "const r=require('./.dokumi/mutants.json');console.log(Object.keys(r),Object.keys(r.gaps[0]??{}))"`）を先に読む。使ったバージョンはレポートに書く。0.3.0 では、この文書のフラグと `gaps` の項目がそのまま使えた。
 
 `.mutator/`（キャッシュとレポート）は、SKILL.md の段階 0 でローカルの除外設定に入れてある。プロジェクトが mutator を正式に導入するなら `.gitignore` に入れるべきだが、それは検証ではなくプロジェクト側の変更なので、レポートで提案するにとどめる。
 
@@ -117,6 +119,8 @@ JSON の主な項目：
 | `notInfected` | 実行はしているが、元とミュータントで値が変わる入力がない | 両者を区別する入力を足す。`>=` → `>` なら境界値そのもの |
 | `notDetected` | 実行して値も変わるが、どのテストも落ちない | 変わる結果をアサートする。`toBeTruthy` を `toBe` に、部分一致を厳密な `toEqual` に |
 
+**未検出と出ても、検出するはずのテストが見当たるなら、手で確かめる。** mutator は、カバレッジの記録から、そのコードを実行するテストを選んで当てる。実際には検出しているテストがあるのに、未検出と報告することがある（実例：JSDOM の上で本物のレンダラを動かすテストが検出している書き換え）。該当しそうなテストがあるときは、コピーの上で同じ書き換えを入れてそのテストを実行する（`references/proving.md` の「壊して確かめる・直して確かめる」）。落ちるなら穴ではない。指摘にせず、「mutator は未検出と報告したが、〈テスト名〉が検出する」と件数つきで note に書く。
+
 `mutants: 0 in the diff` でスコアが 100% のときは、対象が何もなかっただけ（テストやドキュメントだけの変更、または `include` の範囲外）。実測できたとは書かない。既定の対象は `src/**` なので、ソースが別の場所にあるなら `--include` で指定する。
 
 ## 対象に入る範囲
@@ -147,6 +151,20 @@ node $SKILL/scripts/triage-mutants.mjs .dokumi/mutants.json --base <mergeBase> -
 終了コード 1 は「blocker あり」の意味で、スクリプトの失敗ではない（2 が失敗）。
 
 出力の `groups` は、同じ関数・同じ種類の穴をまとめたもの。レポートではこの 1 行を 1 件の指摘として書く（「`App` のルーティングをどのテストも実行していない（9 件）」）。key は再確認用に添える。
+
+```json
+{
+  "summary": { "blocker": 0, "warning": 12, "note": 3 },        // ミュータント単位の件数。レポートには転記しない
+  "groupSummary": { "blocker": 0, "warning": 4, "note": 1 },    // 指摘の件数はこちら
+  "groups": [
+    { "severity": "warning", "needsEvidence": true, "file": "src/App.tsx", "scope": "App",
+      "kind": "notReached", "where": "changedLine", "lines": [20, 21, 24], "keys": ["1ufduz48mg4", "137iu1zwifk", "101x6pelqtr"] }
+  ],
+  "findings": [ /* ミュータント 1 件ごと。key、file、line、kind、title（original → replacement）、fix、coveredBy */ ]
+}
+```
+
+1 件のミュータントの中身（何を何に書き換えたか）は、`groups` の `keys` で `findings` を引く。同じ行に種類の違う未検出が並ぶことは珍しくない。「この行の未到達」を拾うつもりで行番号だけで絞ると、同じ行の `notDetected` まで入る。`kind` と書き換えの内容（`title`）でも絞る。
 
 | 重大度 | 対象 | 理由 |
 |---|---|---|
@@ -192,7 +210,7 @@ npx mutator --only <key> --only <key> --reporter agent > .dokumi/mutants-recheck
 
 どんな入力でも元と区別できないミュータントがある。例：決して nullish にならない値への `?.`、誰も順序を読まない `.sort()`、呼び出し元が既に保証しているガード。
 
-mutator には `mutator accept <key> --reason "..."` で `mutator.accepted.json` に記録する仕組みがある。**dokumi とその差し戻しを受けるエージェントは、これを実行しない。** エージェントが自分で受け入れられるなら、すべての穴を「等価です」で通せてしまう。
+mutator には `mutator accept <key> --reason "..."` で `mutator.accepted.json` に記録する仕組みがある。**dokumi とその差し戻しを受けるエージェントは、自分の判断でこれを実行しない。** エージェントが自分で受け入れられるなら、すべての穴を「等価です」で通せてしまう。
 
 代わりに、等価だと考えるミュータントをレポートの「受け入れ提案」に載せる。
 
@@ -201,6 +219,14 @@ mutator には `mutator accept <key> --reason "..."` で `mutator.accepted.json`
 - 人が実行するコマンド
 
 等価かどうか確信が持てないものは、提案せず「不明」として載せる。
+
+### 人に頼まれて実行するとき
+
+人が提案を読んで「受け入れてよい」と答え、実行も任された場合に限り、エージェントが代わりに実行してよい。
+
+- **方針への同意と、実行の了承は別に取る。** 「等価なものは受け入れる方針でよいか」への「はい」は、実行の了承ではない。実行の前に、受け入れる key の一覧（場所、書き換え、理由）を示し、「この N 件を `mutator accept` で記録してよいか」と尋ねる。了承された key だけを実行する。
+- **key を取り直してから実行する。** `accept` は、今のソースからミュータントを列挙して key を照合する。提案の後でソースを編集していると key が変わり、`no mutant with key` で失敗する。対象のファイルをもう一度測って（`npx mutator --include <file> --reporter agent`）、同じ場所・同じ書き換えの key を引き直す。行番号だけで引き直さない（上の「重大度の線引き」）。
+- **本体の作業ツリーで実行する。** `mutator.accepted.json` は、実行したディレクトリに書かれる。コピーの上で実行すると、本体には何も残らない。このファイルの追加や変更は、次の検証で段階 2 が `mutants-accepted` として検出する。足された key が人の了承した key と一致することを確かめて「確認済み」にする。
 
 `acceptance.killed`（受け入れ済みだが今は検出されている）と `acceptance.stale`（ミュータントがもう存在しない）は、`mutator.accepted.json` から消すべき項目としてレポートに載せる。
 
