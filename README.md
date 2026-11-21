@@ -30,3 +30,7 @@ agent向け検証スキル群
 ## 出典
 
 検証の原則は [pstack](https://github.com/cursor/plugins/tree/main/pstack)（MIT）を参考にした。
+
+## ライセンス
+
+[MIT](LICENSE)
