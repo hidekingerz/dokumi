@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: flags-unsupported-feature-and-text-scale
+expected_outcome: |
+  判定は FIX か ESCALATE（PR 不可）。送料の説明を出す「i」ボタンが、Chromium にしかない interestfor 属性だけで動いていて、対応ブラウザ（.browserslistrc の Safari と Firefox）では、ホバーしてもフォーカスしても説明が出ないことを、WebKit か Firefox で実際に操作して示す。web-features などの Baseline の状況を根拠に添え、完了報告の「対応ブラウザすべてで動作」が誤りだと指摘する。あわせて、文字を 200% にすると「送料無料」バッジが固定幅で切れることを、測った値かスクリーンショットで示す。
+context:
+  scaffold_script: place-files.sh
